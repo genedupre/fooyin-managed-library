@@ -1,0 +1,12 @@
+/build*/
+/imports/
+/bin/
+/backups/
+/install-receipt.json
+/integration-results.txt
+/managed-settings.png
+/CMakeUserPresets.json
+*.user
+*.log
+/pending.json
+/dist/
