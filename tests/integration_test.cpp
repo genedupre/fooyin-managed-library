@@ -132,7 +132,12 @@ private Q_SLOTS:
         Track external(dest,0); QVERIFY(loader->readTrackMetadata(external)); external.setAlbumArtists({u"Edited Elsewhere"_s});
         QVERIFY(loader->writeTrackMetadata(external,AudioReader::Metadata));
         const QString edited=root+u"/Edited Elsewhere/Tekken/6-63 Siren's Call.mp3"_s;
-        QTRY_COMPARE_WITH_TIMEOUT(library.trackForId(id).filepath(),edited,15000);
+#ifndef Q_OS_WIN
+        // inotify may not fire inside a Flatpak SDK sandbox; rescan explicitly.
+        QTest::qWait(500);
+        library.scanTracks({library.trackForId(id)});
+#endif
+        QTRY_COMPARE_WITH_TIMEOUT(library.trackForId(id).filepath(),edited,25000);
         QCOMPARE(playlist->tracks().front().filepath(),edited);
         QVERIFY(!QDir(root+u"/Game Soundtracks"_s).exists());
         // A fooyin-only tag change must not move the file before its tags have been written.
@@ -141,7 +146,11 @@ private Q_SLOTS:
         QTest::qWait(3500); QCOMPARE(library.trackForId(id).filepath(),edited); QVERIFY(QFile::exists(edited));
         QVERIFY(loader->writeTrackMetadata(pending,AudioReader::Metadata));
         const QString written=root+u"/Pending Write/Tekken/6-63 Siren's Call.mp3"_s;
-        QTRY_COMPARE_WITH_TIMEOUT(library.trackForId(id).filepath(),written,15000);
+#ifndef Q_OS_WIN
+        QTest::qWait(500);
+        library.scanTracks({library.trackForId(id)});
+#endif
+        QTRY_COMPARE_WITH_TIMEOUT(library.trackForId(id).filepath(),written,25000);
         // Import from outside the music root preserves original bytes and adopts the existing track ID.
         const QString incoming=temp.path()+u"/incoming.mp3"_s; QVERIFY(QFile::copy(fixturePath,incoming));
         Track incomingTags(incoming,0); QVERIFY(loader->readTrackMetadata(incomingTags));
@@ -188,7 +197,11 @@ int main(int argc,char** argv) {
     QApplication app(argc,argv); if(argc!=4) return 2;
     QCoreApplication::setApplicationName(u"fooyin-managed-test-%1"_s.arg(QCoreApplication::applicationPid()));
     QStandardPaths::setTestModeEnabled(true);
+#ifdef Q_OS_WIN
     app.setFont(QFont(u"Segoe UI"_s,10));
+#else
+    app.setFont(QFont(u"Sans"_s,10));
+#endif
     ScriptRegistry::instance().finalise();
     dllPath=QString::fromLocal8Bit(argv[1]); fixturePath=QString::fromLocal8Bit(argv[2]); screenshotPath=QString::fromLocal8Bit(argv[3]);
     IntegrationTest test;

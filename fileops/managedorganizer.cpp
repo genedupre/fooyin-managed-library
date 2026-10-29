@@ -47,7 +47,14 @@ Managed::Tags ManagedOrganizer::tags(const Track& t)
 {
     return {t.albumArtistsJoined(u"; "_s),t.artistsJoined(u"; "_s),t.album(),t.discNumber(),t.trackNumber(),t.title()};
 }
-QString ManagedOrganizer::root() const { return QDir::cleanPath(QDir::fromNativeSeparators(m_settings->fileValue(Root,u"D:/music"_s).toString())); }
+QString ManagedOrganizer::root() const {
+#ifdef Q_OS_WIN
+    const auto defaultRoot = u"D:/music"_s;
+#else
+    const auto defaultRoot = QDir::homePath() + u"/Music"_s;
+#endif
+    return QDir::cleanPath(QDir::fromNativeSeparators(m_settings->fileValue(Root, defaultRoot).toString()));
+}
 bool ManagedOrganizer::enabled() const { return !m_blocked && m_settings->fileValue(Enabled,false).toBool(); }
 bool ManagedOrganizer::imports() const { return m_settings->fileValue(Imports,true).toBool(); }
 ManagedOrganizer::ManagedOrganizer(const CorePluginContext& c,QObject* parent)
