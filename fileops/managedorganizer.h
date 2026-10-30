@@ -33,6 +33,7 @@ private:
     };
     static Managed::Tags tags(const Track& track);
     QString root() const;
+    QString pattern() const;
     bool enabled() const;
     bool imports() const;
     bool eligible(const Track& track, bool allowExternal) const;

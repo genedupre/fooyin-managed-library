@@ -57,7 +57,109 @@ bool hasLinkAncestor(QString path)
         path = parent;
     }
 }
-Plan plan(const QString& source, const QString& root, const Tags& tags, bool allowImport)
+namespace {
+QString sanitizeTagValue(const QString& value)
+{
+    QString result = value;
+    result.replace(u'/', u'_');
+    result.replace(u'\\', u'_');
+    return result;
+}
+QString tagValue(const Tags& tags, const QString& name)
+{
+    if(name == u"albumartist") return sanitizeTagValue(tags.albumArtist.isEmpty() ? tags.artist : tags.albumArtist);
+    if(name == u"artist") return sanitizeTagValue(tags.artist);
+    if(name == u"album") return sanitizeTagValue(tags.album);
+    if(name == u"title") return sanitizeTagValue(tags.title);
+    if(name == u"disc") {
+        const QString s = tags.disc.section(u'/', 0, 0).trimmed();
+        bool ok = false; const int n = s.toInt(&ok);
+        return ok && n > 0 ? QString::number(n) : QString{};
+    }
+    if(name == u"track") {
+        const QString s = tags.track.section(u'/', 0, 0).trimmed();
+        bool ok = false; const int n = s.toInt(&ok);
+        return ok && n > 0 ? QString::number(n) : QString{};
+    }
+    if(name == u"genre") return {};
+    if(name == u"year" || name == u"date") return {};
+    return {};
+}
+int findMatchingParen(const QString& s, int start)
+{
+    int depth = 1;
+    for(int i = start; i < s.size(); ++i) {
+        if(s[i] == u'(') ++depth;
+        else if(s[i] == u')') { if(--depth == 0) return i; }
+    }
+    return -1;
+}
+QStringList splitArgs(const QString& s)
+{
+    QStringList result; int depth = 0, start = 0;
+    for(int i = 0; i < s.size(); ++i) {
+        if(s[i] == u'(') ++depth;
+        else if(s[i] == u')') --depth;
+        else if(s[i] == u',' && depth == 0) { result.append(s.mid(start, i - start)); start = i + 1; }
+    }
+    result.append(s.mid(start));
+    return result;
+}
+}
+QString evaluatePattern(const QString& pattern, const Tags& tags)
+{
+    QString result;
+    int i = 0;
+    while(i < pattern.size()) {
+        if(pattern[i] == u'%') {
+            const int end = pattern.indexOf(u'%', i + 1);
+            if(end > i) {
+                result += tagValue(tags, pattern.mid(i + 1, end - i - 1).toLower());
+                i = end + 1; continue;
+            }
+        }
+        if(pattern[i] == u'$') {
+            const int paren = pattern.indexOf(u'(', i);
+            if(paren > i) {
+                const QString func = pattern.mid(i + 1, paren - i - 1).toLower();
+                const int close = findMatchingParen(pattern, paren + 1);
+                if(close > paren) {
+                    const auto args = splitArgs(pattern.mid(paren + 1, close - paren - 1));
+                    if(func == u"if" && args.size() >= 2) {
+                        const auto cond = evaluatePattern(args[0], tags);
+                        result += cond.isEmpty()
+                            ? (args.size() >= 3 ? evaluatePattern(args[2], tags) : QString{})
+                            : evaluatePattern(args[1], tags);
+                    } else if(func == u"if2" && args.size() >= 2) {
+                        const auto val = evaluatePattern(args[0], tags);
+                        result += val.isEmpty() ? evaluatePattern(args[1], tags) : val;
+                    } else if(func == u"num" && args.size() >= 2) {
+                        const auto val = evaluatePattern(args[0], tags);
+                        bool ok = false; const int width = evaluatePattern(args[1], tags).toInt(&ok);
+                        if(ok && !val.isEmpty()) {
+                            bool numOk = false; const int n = val.toInt(&numOk);
+                            result += numOk ? QString::number(n).rightJustified(width, u'0') : val;
+                        }
+                    } else if(func == u"lower" && args.size() >= 1) {
+                        result += evaluatePattern(args[0], tags).toLower();
+                    } else if(func == u"upper" && args.size() >= 1) {
+                        result += evaluatePattern(args[0], tags).toUpper();
+                    } else if(func == u"replace" && args.size() >= 3) {
+                        result += evaluatePattern(args[0], tags).replace(
+                            evaluatePattern(args[1], tags), evaluatePattern(args[2], tags));
+                    } else if(func == u"trim" && args.size() >= 1) {
+                        result += evaluatePattern(args[0], tags).trimmed();
+                    }
+                    i = close + 1; continue;
+                }
+            }
+        }
+        result += pattern[i]; ++i;
+    }
+    return result;
+}
+Plan plan(const QString& source, const QString& root, const Tags& tags, bool allowImport,
+          const QString& pattern)
 {
     Plan p{clean(source), {}, clean(root), {}, false};
     const QFileInfo rootInfo(p.root), file(p.source);
@@ -74,26 +176,24 @@ Plan plan(const QString& source, const QString& root, const Tags& tags, bool all
         p.error = u"Outside the managed folder; automatic import is disabled."_s;
         return p;
     }
-    const QString artist = component(tags.albumArtist.isEmpty() ? tags.artist : tags.albumArtist);
-    const QString album = component(tags.album);
-    const QString title = component(tags.title);
-    if(artist.isEmpty() || album.isEmpty() || title.isEmpty()) {
-        p.error = u"Artist, album and title tags are required before organization."_s;
+    const QString evaluated = evaluatePattern(pattern, tags);
+    const auto segments = evaluated.split(u'/');
+    if(segments.isEmpty()) {
+        p.error = u"Organization pattern produced an empty path."_s;
         return p;
     }
-    auto number = [](const QString& raw, int width) {
-        const QString s = raw.section(u'/', 0, 0).trimmed();
-        bool ok = false;
-        const int n = s.toInt(&ok);
-        return ok && n > 0 ? QString::number(n).rightJustified(width, u'0') : QString{};
-    };
-    QString prefix;
-    const auto disc = number(tags.disc, 1), track = number(tags.track, 2);
-    if(!disc.isEmpty()) prefix = disc + u'-';
-    if(!track.isEmpty()) prefix += track + u' ';
-    else if(!prefix.isEmpty()) prefix += u' ';
-    const QString filename = component(prefix + title) + u'.' + file.suffix();
-    p.destination = clean(p.root + u'/' + artist + u'/' + album + u'/' + filename);
+    QString relative;
+    for(int idx = 0; idx < segments.size(); ++idx) {
+        const QString sanitized = component(segments[idx]);
+        if(sanitized.isEmpty()) {
+            p.error = u"A required tag is empty; cannot organize this file."_s;
+            return p;
+        }
+        if(idx > 0) relative += u'/';
+        relative += sanitized;
+    }
+    const QString filename = relative + u'.' + file.suffix();
+    p.destination = clean(p.root + u'/' + filename);
     if(!inside(p.destination, p.root) || hasLinkAncestor(QFileInfo(p.destination).absolutePath()))
         p.error = u"Destination escapes the music folder or uses a symbolic link/junction."_s;
     else if(p.destination.size() >= 250)

@@ -35,6 +35,7 @@ constexpr auto Imports="FileOps/Managed/Import";
 constexpr auto Cleanup="FileOps/Managed/Cleanup";
 constexpr auto CleanupArtwork="FileOps/Managed/CleanupArtwork";
 constexpr auto CleanupNfo="FileOps/Managed/CleanupNfo";
+constexpr auto Pattern="FileOps/Managed/Pattern";
 qint64 modified(const QFileInfo& info) { return info.lastModified().toMSecsSinceEpoch(); }
 class Provider final : public PluginSettingsProvider {
     ManagedOrganizer* m_organizer;
@@ -57,6 +58,7 @@ QString ManagedOrganizer::root() const {
 }
 bool ManagedOrganizer::enabled() const { return !m_blocked && m_settings->fileValue(Enabled,false).toBool(); }
 bool ManagedOrganizer::imports() const { return m_settings->fileValue(Imports,true).toBool(); }
+QString ManagedOrganizer::pattern() const { return m_settings->fileValue(Pattern,Managed::DefaultPattern).toString(); }
 ManagedOrganizer::ManagedOrganizer(const CorePluginContext& c,QObject* parent)
     : QObject(parent),m_library(c.library),m_player(c.playerController),m_settings(c.settingsManager),m_loader(c.audioLoader)
 {
@@ -129,7 +131,7 @@ void ManagedOrganizer::tick()
             ++it; continue;
         }
         m_waitingPlayback.remove(t.id());
-        const auto p=Managed::plan(t.filepath(),root(),tags(t),imports());
+        const auto p=Managed::plan(t.filepath(),root(),tags(t),imports(),pattern());
         if(!p.error.isEmpty()) { log(t.filepath()+u": "_s+p.error); it=m_queue.erase(it); continue; }
         if(Managed::samePath(p.source,p.destination)) { it=m_queue.erase(it); continue; }
         const auto lib=m_library->libraryForPath(p.destination);
@@ -188,7 +190,7 @@ void ManagedOrganizer::commit(const Prepared& result)
        || root()!=m_plan.root || info.size()!=result.size || modified(info)!=result.modified) {
         retry(u"Track or settings changed before move; waiting."_s); return;
     }
-    const auto checked=Managed::plan(live.filepath(),root(),m_tags,imports());
+    const auto checked=Managed::plan(live.filepath(),root(),m_tags,imports(),pattern());
     if(!checked.error.isEmpty()) { finish(checked.error); return; }
     if(!saveJournal(live,m_plan,result.size,result.modified)) { finish(u"Cannot write recovery journal; no file changed."_s); return; }
     Managed::Result operation;
@@ -328,12 +330,31 @@ QDialog* ManagedOrganizer::dialog(QWidget* parent)
 {
     auto* d=new QDialog(parent); d->setWindowTitle(tr("File Operations — Managed library")); d->resize(850,600);
     auto* layout=new QVBoxLayout(d);
-    auto* description=new QLabel(tr("Organize files as Album Artist / Album / Disc-Track Title.\n"
+    auto* description=new QLabel(tr("Organize files using the pattern below. Use / to separate folders.\n"
         "Artist is used when Album Artist is empty. New external additions are copied; their originals remain.\n"
         "Enable fooyin's library and track-file monitoring to detect edits made in other applications."),d);
     description->setWordWrap(true); layout->addWidget(description);
     auto* enable=new QCheckBox(tr("Automatically organize new additions and tag changes"),d); enable->setChecked(enabled()); layout->addWidget(enable);
-    auto* form=new QFormLayout; auto* folder=new QLineEdit(QDir::toNativeSeparators(root()),d); form->addRow(tr("Managed folder:"),folder); layout->addLayout(form);
+    auto* form=new QFormLayout;
+    auto* folder=new QLineEdit(QDir::toNativeSeparators(root()),d); form->addRow(tr("Managed folder:"),folder);
+    auto* patternEdit=new QLineEdit(pattern(),d);
+    patternEdit->setPlaceholderText(Managed::DefaultPattern);
+    form->addRow(tr("Organization pattern:"),patternEdit);
+    auto* patternPreview=new QLabel(d); patternPreview->setStyleSheet(u"color: grey; font-size: 11px;"_s);
+    form->addRow(u""_s,patternPreview);
+    const auto updatePreview=[patternPreview,patternEdit] {
+        const Managed::Tags sample{u"Game Soundtracks"_s,u"Taku Inoue"_s,u"Tekken"_s,u"6"_s,u"63"_s,u"Siren's Call"_s};
+        const auto pat=patternEdit->text().isEmpty() ? Managed::DefaultPattern : patternEdit->text();
+        const auto evaluated=Managed::evaluatePattern(pat,sample);
+        patternPreview->setText(tr("Preview: %1.mp3").arg(evaluated));
+    };
+    updatePreview();
+    connect(patternEdit,&QLineEdit::textChanged,d,updatePreview);
+    auto* patternHelp=new QLabel(tr("Tags: %albumartist%, %artist%, %album%, %title%, %disc%, %track%\n"
+        "Functions: $if(tag,then,else), $if2(tag,fallback), $num(tag,digits), $lower(), $upper()"),d);
+    patternHelp->setStyleSheet(u"color: grey; font-size: 10px;"_s);
+    layout->addLayout(form);
+    layout->addWidget(patternHelp);
     auto* import=new QCheckBox(tr("Copy newly added files from outside this folder (including network files)"),d); import->setChecked(imports()); layout->addWidget(import);
     auto* cleanup=new QCheckBox(tr("Remove empty old folders, stopping at the managed folder"),d); cleanup->setChecked(m_settings->fileValue(Cleanup,true).toBool()); layout->addWidget(cleanup);
     auto* artwork=new QCheckBox(tr("Also recycle leftover cover artwork in old folders"),d); artwork->setChecked(m_settings->fileValue(CleanupArtwork,false).toBool()); layout->addWidget(artwork);
@@ -348,7 +369,7 @@ QDialog* ManagedOrganizer::dialog(QWidget* parent)
     auto* activity=new QPlainTextEdit(d); activity->setReadOnly(true); activity->setPlainText(m_messages.join(u'\n')); layout->addWidget(activity,1);
     connect(this,&ManagedOrganizer::activityChanged,d,[this,activity]{activity->setPlainText(m_messages.join(u'\n'));});
     auto* preview=new QPushButton(tr("Preview existing library…"),d); layout->addWidget(preview);
-    const auto save=[this,d,enable,folder,import,cleanup,artwork,nfo] {
+    const auto save=[this,d,enable,folder,patternEdit,import,cleanup,artwork,nfo] {
         if(m_busy) { QMessageBox::information(d,tr("Operation in progress"),tr("Wait for the current operation to finish before changing settings.")); return false; }
         const auto path=QDir::cleanPath(QDir::fromNativeSeparators(folder->text().trimmed()));
         const QFileInfo info(path); const auto lib=m_library->libraryForPath(path+u"/probe.mp3"_s);
@@ -356,13 +377,15 @@ QDialog* ManagedOrganizer::dialog(QWidget* parent)
             QMessageBox::warning(d,tr("Choose a library folder"),tr("Choose an existing folder that is itself configured as a fooyin library. Drive roots and linked folders are not supported.")); return false;
         }
         if(m_blocked && enable->isChecked()) { QMessageBox::warning(d,tr("Recovery needed"),tr("Resolve the pending recovery journal before enabling organization.")); return false; }
+        const auto pat=patternEdit->text().trimmed().isEmpty() ? Managed::DefaultPattern : patternEdit->text().trimmed();
         m_settings->fileSet(Root,path);
+        m_settings->fileSet(Pattern,pat);
         m_settings->fileSet(Imports,import->isChecked());
         m_settings->fileSet(Cleanup,cleanup->isChecked());
         m_settings->fileSet(CleanupArtwork,artwork->isChecked());
         m_settings->fileSet(CleanupNfo,nfo->isChecked());
         m_settings->fileSet(Enabled,enable->isChecked());
-        const bool ok=root()==path && imports()==import->isChecked()
+        const bool ok=root()==path && pattern()==pat && imports()==import->isChecked()
             && m_settings->fileValue(Cleanup).toBool()==cleanup->isChecked()
             && m_settings->fileValue(CleanupArtwork).toBool()==artwork->isChecked()
             && m_settings->fileValue(CleanupNfo).toBool()==nfo->isChecked()
@@ -377,7 +400,7 @@ QDialog* ManagedOrganizer::dialog(QWidget* parent)
         for(const auto& t:m_library->libraryTracks()) {
             if(!Managed::inside(t.filepath(),base)) continue;
             if(!eligible(t,false)) { ++skipped; continue; }
-            const auto p=Managed::plan(t.filepath(),base,tags(t),false);
+            const auto p=Managed::plan(t.filepath(),base,tags(t),false,pattern());
             if(!p.error.isEmpty()) { ++skipped; lines.append(u"SKIP: "_s+t.filepath()+u" — "_s+p.error); }
             else if(Managed::samePath(p.source,p.destination)) ++unchanged;
             else { candidates.push_back(t); lines.append(p.source+u"\n  → "_s+p.destination); }
