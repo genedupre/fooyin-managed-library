@@ -43,6 +43,43 @@ private Q_SLOTS:
         QCOMPARE(removeEmptyParents(source,root).size(),2); QVERIFY(QDir(root).exists());
         QVERIFY(execute(plan(p.destination,root,{"Game Soundtracks","","Tekken","6","63","Siren's Call"},false)).succeeded);
     }
+    void customPatternFlat() {
+        QTemporaryDir t; QVERIFY(t.isValid());
+        const auto root=t.path()+"/music"; const auto source=root+"/old.mp3"; write(source);
+        auto p=plan(source,root,{"Artist","","Album","1","5","Song"},false,"%albumartist% - %album% - $num(%track%,3) %title%");
+        QVERIFY2(p.error.isEmpty(),qPrintable(p.error));
+        QCOMPARE(p.destination,root+"/Artist - Album - 005 Song.mp3");
+    }
+    void customPatternWithIf() {
+        QTemporaryDir t; QVERIFY(t.isValid());
+        const auto root=t.path()+"/music"; const auto source=root+"/old.mp3"; write(source);
+        Tags withDisc{"Artist","","Album","2","5","Song"};
+        auto p=plan(source,root,withDisc,false,"$if(%disc%,%albumartist%/%album%/Disc %disc%/$num(%track%,2) %title%,%albumartist%/%album%/$num(%track%,2) %title%)");
+        QVERIFY2(p.error.isEmpty(),qPrintable(p.error));
+        QCOMPARE(p.destination,root+"/Artist/Album/Disc 2/05 Song.mp3");
+        Tags noDisc{"Artist","","Album","","5","Song"};
+        p=plan(source,root,noDisc,false,"$if(%disc%,%albumartist%/%album%/Disc %disc%/$num(%track%,2) %title%,%albumartist%/%album%/$num(%track%,2) %title%)");
+        QVERIFY2(p.error.isEmpty(),qPrintable(p.error));
+        QCOMPARE(p.destination,root+"/Artist/Album/05 Song.mp3");
+    }
+    void evaluatePatternFunctions() {
+        Tags tags{"Artist","","Album","","1","Song"};
+        QCOMPARE(evaluatePattern("$lower(%albumartist%)",tags),QString("artist"));
+        QCOMPARE(evaluatePattern("$upper(%albumartist%)",tags),QString("ARTIST"));
+        QCOMPARE(evaluatePattern("$if2(%disc%,No Disc)",tags),QString("No Disc"));
+        QCOMPARE(evaluatePattern("$if2(%albumartist%,fallback)",tags),QString("Artist"));
+        QCOMPARE(evaluatePattern("$num(%track%,3)",tags),QString("001"));
+        QCOMPARE(evaluatePattern("$trim(  hello  )",tags),QString("hello"));
+        QCOMPARE(evaluatePattern("$replace(%albumartist%,Art,Mus)",tags),QString("Musist"));
+    }
+    void defaultPatternMatchesOldBehavior() {
+        Tags tags{"Game Soundtracks","Taku Inoue","Tekken","6","63","Siren's Call"};
+        auto result=evaluatePattern(DefaultPattern,tags);
+        QCOMPARE(result,QString("Game Soundtracks/Tekken/6-63 Siren's Call"));
+        Tags noDisc{"Artist","","Album","","5","Title"};
+        result=evaluatePattern(DefaultPattern,noDisc);
+        QCOMPARE(result,QString("Artist/Album/05 Title"));
+    }
     void importKeepsOriginalAndCollisionRefusesOverwrite() {
         QTemporaryDir t; const auto root=t.path()+"/music"; QVERIFY(QDir{}.mkpath(root));
         const auto source=t.path()+"/incoming/song.mp3"; write(source);
