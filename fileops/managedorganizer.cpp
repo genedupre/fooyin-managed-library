@@ -49,11 +49,9 @@ Managed::Tags ManagedOrganizer::tags(const Track& t)
     return {t.albumArtistsJoined(u"; "_s),t.artistsJoined(u"; "_s),t.album(),t.discNumber(),t.trackNumber(),t.title()};
 }
 QString ManagedOrganizer::root() const {
-#ifdef Q_OS_WIN
-    const auto defaultRoot = u"D:/music"_s;
-#else
-    const auto defaultRoot = QDir::homePath() + u"/Music"_s;
-#endif
+    // The user's own Music folder (e.g. C:\Users\<name>\Music, ~/Music).
+    auto defaultRoot = QStandardPaths::writableLocation(QStandardPaths::MusicLocation);
+    if(defaultRoot.isEmpty()) defaultRoot = QDir::homePath() + u"/Music"_s;
     return QDir::cleanPath(QDir::fromNativeSeparators(m_settings->fileValue(Root, defaultRoot).toString()));
 }
 bool ManagedOrganizer::enabled() const { return !m_blocked && m_settings->fileValue(Enabled,false).toBool(); }
@@ -80,7 +78,10 @@ ManagedOrganizer::ManagedOrganizer(const CorePluginContext& c,QObject* parent)
     connect(m_library,&MusicLibrary::scanFinished,this,[this](int id,ScanRequest::Type,bool) { m_scans.remove(id); });
     // Loading a playlist/database is not permission to import its entire history.
     connect(m_library,&MusicLibrary::tracksLoaded,this,[this](const TrackList&) { recover(); });
-    connect(m_library,&MusicLibrary::tracksDeleted,this,[this](const TrackList& list) { for(const auto& t:list) m_queue.remove(t.id()); });
+    connect(m_library,&MusicLibrary::tracksDeleted,this,[this](const TrackList& list) {
+        for(const auto& t:list) m_queue.remove(t.id());
+        cleanupDeleted(list);
+    });
     QTimer::singleShot(3000,this,&ManagedOrganizer::recover);
     m_timer.start();
 }
@@ -306,6 +307,22 @@ void ManagedOrganizer::cleanupOldPath(const QString& source)
     if(!m_settings->fileValue(Cleanup,true).toBool()) return;
     const Managed::CleanupOptions options{m_settings->fileValue(CleanupArtwork,false).toBool(),m_settings->fileValue(CleanupNfo,false).toBool()};
     for(const auto& message:Managed::cleanupOldParents(source,root(),options)) log(message);
+}
+void ManagedOrganizer::cleanupDeleted(const TrackList& tracks)
+{
+    // Deleting the last tracks of an album/artist should not leave its folders behind.
+    // Only files that are really gone are considered ("Remove from library" keeps the file),
+    // and cleanupOldParents still protects any folder that contains music or unknown files.
+    if(!enabled() || m_stopping) return;
+    const QString base=root();
+    QMap<QString,QString> folders; // one representative file per parent folder
+    for(const auto& t:tracks) {
+        if(!t.isValid() || t.isRemote() || t.isInArchive()) continue;
+        const QString path=t.filepath();
+        if(path.isEmpty() || !Managed::inside(path,base) || QFileInfo::exists(path)) continue;
+        folders.insert(QFileInfo(path).absolutePath(),path);
+    }
+    for(const auto& path:std::as_const(folders)) cleanupOldPath(path);
 }
 void ManagedOrganizer::cleanupHistory()
 {

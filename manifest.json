@@ -1,5 +1,5 @@
 {
-  "version": "0.14.1-managed.3",
+  "version": "0.1.7",
   "upstream": "5a373aa9763d6f8d86cc749c68971a0f3b1d8918",
   "pluginSha256": "DBB6057817B42A03CF9FC7DF22825BF64FEDA922DEA24F7376A2E413D42D3759",
   "runtime": {

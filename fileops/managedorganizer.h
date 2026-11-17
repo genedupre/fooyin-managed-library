@@ -50,6 +50,7 @@ private:
     void restoreMonitoring();
     void log(const QString& message);
     void cleanupOldPath(const QString& source);
+    void cleanupDeleted(const TrackList& tracks);
     void cleanupHistory();
     bool saveJournal(const Track& track, const Managed::Plan& plan, qint64 size, qint64 modified);
     MusicLibrary* m_library;
