@@ -1,121 +1,154 @@
 # fooyin Managed Library
 
-Automatically organize music by Album Artist and Album when tracks are added or their tags change. This extension replaces fooyin's File Operations plugin and retains its manual copy, move, rename and delete actions.
+A drop-in replacement for fooyin's **File Operations** plugin. It keeps your music folder organized for you: when you add tracks or edit their tags, files are moved into `Artist/Album/` folders based on a pattern you choose. When you delete an artist's or album's last tracks, its leftover folders are cleaned up too. The original manual copy, move, rename and delete actions are still there.
 
-**Supported release target: Windows x64, fooyin 0.14.1, Qt 6.12.0.** The installer verifies the exact tested runtime DLL hashes; other builds of the same version may be rejected. Linux and macOS are not currently supported or tested. This is an independent GPL extension, not an official fooyin release.
+- **fooyin:** 0.14.1
+- **Platforms:** Linux (fooyin Flatpak) and Windows x64
+- **Version:** 0.1.7
 
-## Use
+This is an independent GPL extension, not an official fooyin release.
 
-Keep **File Operations** enabled. Open **Settings → Plugins → File Operations → Configure**.
+## Install
 
-1. Set the managed folder to `D:\music`. That folder must itself be configured as a fooyin library.
-2. Enable automatic organization and Save. Existing files are not immediately bulk-organized.
-3. New additions and subsequent tag changes are organized automatically. Keep **Library → Monitor libraries** and **Monitor track files** enabled so edits from other programs are detected.
-4. For the existing collection, reopen Configure, choose **Preview existing library**, inspect the proposed paths, then **Organize these files**.
+### Linux (Flatpak)
 
-Folder layout: `Album Artist\Album\Disc-Track Title.extension`. Artist is the fallback when Album Artist is absent. Disc is unpadded; track is padded to at least two digits. For example:
+You need the fooyin Flatpak (`org.fooyin.fooyin`), the KDE SDK (`flatpak install org.kde.Sdk//6.11`) and the fooyin source for the headers:
 
-`D:\music\Game Soundtracks\Tekken\6-63 Tekken 7 - Siren's Call.mp3`
-
-Imports from outside the managed folder (including UNC shares) are **copied**; their original source files remain. Files already in another configured fooyin library are not imported automatically. The destination adopts the original track ID, preserving fooyin playlist references.
-
-## Behavior and limits
-
-- Disabled by default. Enabling handles additions and changes, not the entire historical playlist collection. Preview explicitly queues existing library files.
-- Waits for playing/paused files, active library scans and outstanding differences between disk and fooyin path-driving tags.
-- Preparation and network copying run on a background thread. Final renames and library updates run on the application thread. Network reads can delay orderly shutdown while an in-flight copy finishes.
-- Never intentionally overwrites another file. Conflicts and incomplete tags appear in the activity log. No duplicate merging or automatic suffixes.
-- Removes genuinely empty old folders under the managed root, including checking hidden/system entries.
-- Two independent, default-off settings can also recycle leftover **cover artwork** and **NFO files**. Cleanup runs only in old folders containing no music, child folders, links or unknown files. Artwork means common filenames such as Cover, folder, front, back, fanart, artist, poster, banner, logo, disc, cdart, clearart, landscape and thumb, with JPG/JPEG/PNG/WebP/GIF/BMP/TIF/TIFF extensions. NFO means any `.nfo` file. Disabled categories stay in place. If recycling fails the file stays; there is no permanent-delete fallback. Every recycling action/failure is logged.
-- Embedded artwork is not checked. Enable artwork cleanup only when external cover files are no longer needed. Music files and their embedded tags/artwork are never deleted by this cleanup.
-- **Clean up old folders from activity log** saves the dialog settings and applies the same rules to source folders from earlier successful moves. This addresses folders left by the previous plugin version without scanning or reorganizing the entire library. Ordinary Save affects future moves only.
-- Skips cue sheets, archives, subsongs, database-only tags, symbolic links and junctions. Destinations of 250 characters or longer are skipped.
-- Five retries for metadata mismatches or changing files, then a logged skip; a subsequent refresh/edit or preview retries the track.
-- Windows sharing/locking/access errors during a move retry automatically, with increasing delays of 3–30 seconds and a maximum of ten attempts. Other queued tracks can continue while a retry waits. Every failed attempt and eventual success are logged. Same-folder-tree moves use the Windows rename API without a copy/delete fallback, so a locked file never produces a temporary destination copy.
-- A recovery journal records each operation before its rename. On startup it repairs an interrupted database path update when source/destination identity checks agree; ambiguous cases pause organization for review. This is not a full undo history.
-- External applications' playlists are not rewritten. fooyin updates its own library and playlists. Concurrent filesystem changes by unrelated programs cannot be made transactional with fooyin.
-- Do not use manual file operations on the same tracks while automatic organization is processing them.
-
-Activity: `%LOCALAPPDATA%\fooyin\managed-fileops\activity.log`. Recovery journal in the same folder, `pending.json` (normally absent). The dialog shows this session's most recent 200 messages. The log also records source and destination paths for manual review.
-
-## Install on Windows
-
-**Current publication: source only.** No prebuilt DLL is included yet. Build and test the source using the instructions below, then run `package.ps1` with the same Qt/source/runtime parameters to create an installable ZIP. The public metadata/build-script revision still needs a fresh completed build; the preceding local runtime implementation passed the validation described below.
-
-Use a packaged release containing `bin/fyplugin_fileops.dll`, `manifest.json`, `install.ps1` and `rollback.ps1`. A source checkout alone is not an installable binary release.
-
-1. Extract the release into a permanent, writable folder. Keep this folder: it holds the installation receipt and rollback backups.
-2. Quit fooyin using **File → Quit**.
-3. Open PowerShell as administrator under your usual Windows account and change to the extracted folder.
-4. Run:
-
-   ```powershell
-   .\install.ps1
-   ```
-
-   For a custom installation location:
-
-   ```powershell
-   .\install.ps1 -FooyinDirectory 'D:\Apps\fooyin'
-   ```
-
-5. Reopen fooyin, keep **File Operations** enabled, and follow **Use** above.
-
-The installer checks compatibility and checksums, backs up the previously installed plugin and the current Windows user's standard fooyin configuration/database, then installs the replacement. It does not move music or change organizer settings. Automatic organization is disabled on first installation; upgrades retain existing settings. Portable/custom profile locations are not included in the profile backup.
-
-If Windows blocks downloaded scripts, review them and use `Unblock-File .\install.ps1` (and similarly for `rollback.ps1`) before running. Organization policy may still restrict script execution.
-
-### Roll back
-
-Quit fooyin and run ` .\rollback.ps1` from the same package folder in administrator PowerShell. It restores the plugin saved by the most recent installation from that folder. That might be an earlier version of this extension. It does **not** undo music moves or restore the database. Keep your usual music backups.
-
-A fooyin update may replace this plugin or change its compatibility. Do not bypass the installer's runtime checks: a new runtime needs a matching build and tests.
-
-## Build from source
-
-Requirements:
-
-- Windows x64 and Visual Studio 2022 C++ Build Tools with a Windows SDK.
-- Qt **6.12.0 MSVC2022 x64** SDK, including Qt SVG.
-- Python 3, CMake 3.25 or newer, and Ninja on PATH.
-- The matching installed fooyin 0.14.1 runtime.
-- Upstream fooyin source at commit `5a373aa9763d6f8d86cc749c68971a0f3b1d8918` (v0.14.1).
-
-Obtain upstream source in a separate directory:
-
-```powershell
-git clone --branch v0.14.1 https://github.com/fooyin/fooyin.git ..\fooyin
-git -C ..\fooyin checkout 5a373aa9763d6f8d86cc749c68971a0f3b1d8918
+```bash
+git clone --branch v0.14.1 --depth 1 https://github.com/fooyin/fooyin.git ../fooyin
+./build.sh      # builds inside the KDE SDK and runs the tests
+./install.sh    # copies the plugin into the Flatpak's user plugin folder
 ```
 
-From an **x64 Native Tools Command Prompt for VS 2022**, launch PowerShell and run from this repository:
+If the fooyin source is somewhere other than `../fooyin`, run `FOOYIN_SOURCE=/path/to/fooyin ./build.sh`.
 
-```powershell
-.\build.ps1 -QtDirectory 'C:\Qt\6.12.0\msvc2022_64' -FooyinSource '..\fooyin'
+The plugin is installed to `~/.var/app/org.fooyin.fooyin/.local/lib/fooyin/plugins/`, and the previous version is kept as `fyplugin_fileops.so.bak`. Restart fooyin with **File → Quit** and reopen it.
+
+If **Settings → Plugins** shows two "File Operations" entries, untick **Load** on the stock one (author: fooyin).
+
+### Windows
+
+There's no prebuilt release yet. Build the plugin (see [Building on Windows](#building-on-windows)), run `package.ps1` to create a ZIP, then:
+
+1. Extract the ZIP to a permanent folder. It holds the install receipt and rollback backups.
+2. Quit fooyin with **File → Quit**.
+3. In an administrator PowerShell, run `.\install.ps1` from that folder. For a non-default fooyin location, add `-FooyinDirectory 'C:\path\to\fooyin'`.
+
+The installer checks that your fooyin runtime matches the tested build, backs up the current plugin plus your fooyin config and database, then installs. `.\rollback.ps1` puts the previous plugin back. It does **not** undo moved files.
+
+## Setup
+
+Open **Settings → Plugins → File Operations → Configure**.
+
+1. **Managed folder:** defaults to your system Music folder (`~/Music` or `C:\Users\<you>\Music`). Change it if your music is elsewhere. It must also be added as a library in fooyin.
+2. **Organization pattern:** leave the default or write your own (see below). The dialog shows a live preview.
+3. Tick **Automatically organize new additions and tag changes** and Save.
+4. In fooyin's library settings, keep **Monitor libraries** and **Monitor track files** on so changes made by other programs are picked up.
+
+Enabling it does **not** touch your existing collection. To organize what's already there, click **Preview existing library…**, review the proposed moves, then click **Organize these files**.
+
+## Organization pattern
+
+Default:
+
+```
+%albumartist%/%album%/$if(%disc%,%disc%-,)$num(%track%,2) %title%
 ```
 
-Use `-FooyinDirectory` for a non-default runtime location. The script generates import libraries, builds the plugin and runs CTest. After successful tests, run `.\package.ps1 -QtDirectory 'C:\Qt\6.12.0\msvc2022_64' -FooyinSource '..\fooyin'` (adding `-FooyinDirectory` for a custom runtime); it rebuilds and tests before packaging, and its ZIP contains the matching source, license, binary and installer. Output is `build/fyplugin_fileops.dll`. `make_imports.py` reconstructs import libraries from the installed DLL export tables, distinguishing data exports from functions.
+This gives `Daft Punk/Discovery/01 One More Time.flac`, or `Daft Punk/Alive 2007/2-03 Around the World.flac` for multi-disc albums. The extension always stays the same, and `/` separates folders.
 
-The current CMake project uses MSVC flags, Windows DLL imports and Windows runtime paths. Some file-management code has non-Windows branches; that does not make the delivered plugin a tested cross-platform build.
+| Tag | Value |
+|---|---|
+| `%albumartist%` | Album Artist, or Artist if that's empty |
+| `%artist%`, `%album%`, `%title%` | The tag as-is |
+| `%disc%`, `%track%` | The number only (`3/12` → `3`) |
+
+| Function | Does |
+|---|---|
+| `$if(x,then,else)` | `then` if `x` isn't empty, otherwise `else` (optional) |
+| `$if2(x,fallback)` | `x`, or `fallback` if `x` is empty |
+| `$num(x,n)` | Zero-pads a number to `n` digits |
+| `$lower(x)`, `$upper(x)`, `$trim(x)` | Changes case or trims spaces |
+| `$replace(x,from,to)` | Replaces text |
+
+Characters that aren't allowed in file names are replaced. If a folder or file name would come out empty (for example, a missing album tag), the track is skipped and logged.
+
+## What happens to files
+
+- **Tracks inside the managed folder** are moved. fooyin's library and playlists follow the move, because the track keeps its ID.
+- **Tracks added from outside** (another drive, a network share) are **copied** in, and the original stays where it was. You can turn this off with **Copy newly added files from outside this folder**. Tracks that belong to another fooyin library are never pulled in.
+- **Existing files are never overwritten.** If the destination already exists, both files stay put and the conflict is logged.
+- **Playing or paused tracks** wait until playback moves on. Moves also wait while a library scan is running.
+
+## Folder cleanup
+
+After a track is moved away or deleted, its old folder is removed if it's now empty. The cleanup then works upward and stops at the managed folder, so deleting an artist's last album removes the album folder and then the artist folder.
+
+Leftover extras often keep a folder from being empty. Two optional settings send them to the trash:
+
+- **Cover artwork:** image files (`jpg`, `png`, `webp`, `gif`, `bmp`, `tif`) named `cover`, `folder`, `front`, `back`, `fanart`, `artist`, `poster`, `banner`, `logo`, `disc`, `cdart`, `clearart`, `landscape` or `thumb`.
+- **NFO files:** any `.nfo`.
+
+A folder is only cleaned when nothing else is left in it: no music, subfolders, links or unrecognized files. Files go to the trash and are never deleted permanently. If moving one to the trash fails, it stays. Every action is logged.
+
+"Remove from library" without deleting the files doesn't trigger cleanup. To clean folders left behind by earlier versions, use **Clean up old folders from activity log**.
+
+## Not handled
+
+These are skipped: cue sheets, files inside archives, subsongs, database-only tags, symbolic links and junctions, and destination paths of 250 characters or more.
+
+Other things to know:
+- Playlists in other applications aren't updated.
+- Don't run manual file operations on tracks while the organizer is still processing them.
+- On Windows, a file that's locked by another program is retried up to 10 times, waiting longer each time (3–30 s).
+
+## Logs and recovery
+
+The configure dialog shows the last 200 log messages. The full log is `activity.log` in:
+
+| Setup | Folder |
+|---|---|
+| Linux Flatpak | `~/.var/app/org.fooyin.fooyin/data/fooyin/managed-fileops/` |
+| Linux native | `~/.local/share/fooyin/managed-fileops/` |
+| Windows | `%LOCALAPPDATA%\fooyin\managed-fileops\` |
+
+Before each move, the plugin writes a `pending.json` to the same folder. If fooyin closes in the middle of a move, the plugin uses it on the next start to finish updating the library. If the situation is unclear, the organizer pauses instead of guessing, and the log explains why.
 
 ## Troubleshooting
 
-- **Nothing happens after enabling:** enabling does not reorganize existing tracks. Use the preview to review a bulk move, or reload tags for a selected track to queue it.
-- **One file stays behind:** stop playback if it is playing or paused. Temporary Windows move failures retry up to ten attempts with delays. After a logged skip, select only that track and choose **Tagging → Reload tags from files** to retry.
-- **Old folders remain:** cleanup preserves music, unknown files, child folders and disabled sidecar categories. Enable the appropriate optional cleanup settings if desired; existing leftovers can be checked with **Clean up old folders from activity log**.
-- **Wrong artist folder:** check **Album Artist**, which takes priority over Artist.
-- **Collision:** the organizer retains the source instead of overwriting another file. Resolve the conflicting destination before retrying.
+- **Nothing happens after enabling:** only new additions and tag changes are organized. Use **Preview existing library…** for everything else.
+- **One file didn't move:** check the log. It's usually playback, a tag mismatch or a conflict. To retry, select the track and choose **Tagging → Reload tags from files**.
+- **A folder was left behind:** something in it isn't recognized, or artwork/NFO cleanup is off. Look in the folder, or check the log.
+- **Wrong artist folder:** Album Artist takes priority over Artist.
 
-When reporting problems, include the plugin/fooyin version and relevant log lines. Review logs for personal paths before sharing. Do not upload your library database, configuration, installation backups or recovery journal.
+When reporting a bug, include the plugin version and the relevant log lines, and remove any personal paths first.
+
+## Building on Windows
+
+Requirements: Visual Studio 2022 C++ Build Tools, Qt 6.12.0 MSVC2022 x64 (with Qt SVG), Python 3, CMake 3.25+ and Ninja, plus the installed fooyin 0.14.1 and its source at the same version:
+
+```powershell
+git clone --branch v0.14.1 https://github.com/fooyin/fooyin.git ..\fooyin
+```
+
+From an **x64 Native Tools Command Prompt for VS 2022**, run:
+
+```powershell
+.\build.ps1   -QtDirectory 'C:\Qt\6.12.0\msvc2022_64' -FooyinSource '..\fooyin'
+.\package.ps1 -QtDirectory 'C:\Qt\6.12.0\msvc2022_64' -FooyinSource '..\fooyin'
+```
+
+Add `-FooyinDirectory` if fooyin isn't installed in the default location. `make_imports.py` generates import libraries from the installed fooyin DLLs, so you don't need a full fooyin build.
+
+## Tests
+
+`ctest` runs three tests:
+- unit tests for path planning, the pattern engine and folder cleanup
+- a plugin-load test
+- an integration test against the real fooyin libraries, using a temporary database and sample MP3s
+
+The integration test covers moves, kept track IDs and playlist paths, tag-change monitoring, waiting for playback, external copies, conflicts and recovery from an interrupted move. It doesn't cover cleanup after a delete. Nothing in your real library is touched.
 
 ## Credits and license
 
-Managed-library extension by **Dupre Gene (genedupre)**. Based on fooyin's File Operations plugin by Luke Taylor and fooyin contributors. Original copyright notices are retained. Source is licensed under **GPL-3.0-or-later**; see [LICENSE](LICENSE).
-
-## Validation
-
-The preceding local Windows build passed all three CTest targets. The public packaging revision has not yet completed a fresh build; do not treat these prior results as release certification.
-
-CTest includes path/file-operation tests, a DLL-load test and an integration test using the installed fooyin core/gui DLLs, a temporary SQLite library and copied upstream MP3 fixtures. It checks disabled defaults, settings saves, Album Artist moves, preserved track IDs and playlist paths, real external tag-file monitoring, pending tag writes, playing-file deferral, external copies, collisions and interrupted-move recovery. Cleanup tests cover independent artwork/NFO toggles, protecting music/unknown files/subfolders/root, and retaining files when recycling fails. No real library files are modified by the tests.
-
-The integration test's configuration dialog is also rendered to `managed-settings.png`. This does not simulate every codec, network failure or power-loss condition.
+Managed-library extension by Gene Dupré ([genedupre](https://github.com/genedupre)). Based on fooyin's File Operations plugin by Luke Taylor and the fooyin contributors. Licensed under **GPL-3.0-or-later**, see [LICENSE](LICENSE).
